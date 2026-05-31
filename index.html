@@ -705,6 +705,7 @@ const MP = {
             lowTrump: gameState.lowTrump || null,
             jackHolder: gameState.jackHolder !== undefined ? gameState.jackHolder : null,
             rules: gameRules,
+            players: gameState.players || {},
             _ts: Date.now()
         };
     },
@@ -911,6 +912,7 @@ async function hostStartGame() {
 
     showScreen('gameScreen');
     resetGameState();
+    gameState.players = players;  // store for serialization
     updateScoreDisplay();
 
     Object.entries(players).forEach(([seat, data]) => {
@@ -1037,15 +1039,39 @@ function applyRemoteState(state) {
     });
     if (state.rules) Object.assign(gameRules, state.rules);
     updateScoreDisplay();
+    // Remap player labels to guest's visual perspective
+    if (MP.active && !MP.isHost && state.players) {
+        const SEATS = ['south', 'west', 'north', 'east'];
+        const visualNames = { south: 'YOU', west: 'Left', north: 'Partner', east: 'Right' };
+        SEATS.forEach(absSeat => {
+            const visual = seatToVisual(absSeat);
+            const cap = visual.charAt(0).toUpperCase() + visual.slice(1);
+            const el = document.getElementById('label' + cap);
+            if (el) {
+                const playerName = state.players[absSeat] ? state.players[absSeat].name : null;
+                if (visual === 'south') {
+                    el.textContent = 'YOU (' + (playerName || MP.myName) + ')';
+                } else {
+                    el.textContent = playerName ? playerName : (absSeat.charAt(0).toUpperCase() + absSeat.slice(1) + ' (AI)');
+                }
+            }
+        });
+    }
     renderAllHands();
     if (state.trumpSuit) showTrumpIndicator(state.trumpSuit);
     if (state.currentPlayer) showTurnIndicator(state.currentPlayer);
-    // Render trick cards on table
+    // Render trick cards on table — rotate positions to guest's perspective
     const trickArea = document.getElementById('trickArea');
     trickArea.innerHTML = '';
+    const SEATS = ['south', 'west', 'north', 'east'];
+    const myBase = MP.active && !MP.isHost ? MP.myPosition : 'south';
+    const myIdx = SEATS.indexOf(myBase);
     Object.entries(state.trickCards || {}).forEach(([pos, card]) => {
         const div = document.createElement('div');
-        div.className = 'trick-card ' + pos;
+        const absIdx = SEATS.indexOf(pos);
+        const relIdx = ((absIdx - myIdx) + 4) % 4;
+        const relPos = SEATS[relIdx];
+        div.className = 'trick-card ' + relPos;
         div.innerHTML = getCardHTML(card, false, true);
         trickArea.appendChild(div);
     });
@@ -1413,7 +1439,8 @@ function clearTurnIndicators() {
 
 function showTurnIndicator(pos) {
     clearTurnIndicators();
-    const cap = pos.charAt(0).toUpperCase() + pos.slice(1);
+    const visual = seatToVisual(pos);
+    const cap = visual.charAt(0).toUpperCase() + visual.slice(1);
     const arrow = document.getElementById('arrow' + cap);
     const label = document.getElementById('label' + cap);
     if (arrow) arrow.classList.add('show');
@@ -1580,8 +1607,18 @@ function renderAllHands() {
     for (const pos of PLAY_ORDER) renderHand(pos);
 }
 
+// Map absolute seat to visual slot relative to this player's perspective
+function seatToVisual(absSeat) {
+    if (!MP.active || MP.isHost) return absSeat;
+    const SEATS = ['south', 'west', 'north', 'east'];
+    const myIdx = SEATS.indexOf(MP.myPosition);
+    const absIdx = SEATS.indexOf(absSeat);
+    return SEATS[((absIdx - myIdx) + 4) % 4];
+}
+
 function renderHand(pos, highlightPlayable) {
-    const container = document.getElementById('hand' + pos.charAt(0).toUpperCase() + pos.slice(1));
+    const visualPos = seatToVisual(pos);
+    const container = document.getElementById('hand' + visualPos.charAt(0).toUpperCase() + visualPos.slice(1));
     const hand = gameState.hands[pos];
 
     // In MP: only show face-up cards for your own seat
