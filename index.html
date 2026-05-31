@@ -1609,10 +1609,12 @@ function renderAllHands() {
 
 // Map absolute seat to visual slot relative to this player's perspective
 function seatToVisual(absSeat) {
-    if (!MP.active || MP.isHost) return absSeat;
+    if (!MP.active || MP.isHost || !MP.myPosition) return absSeat;
     const SEATS = ['south', 'west', 'north', 'east'];
     const myIdx = SEATS.indexOf(MP.myPosition);
+    if (myIdx === -1) return absSeat;
     const absIdx = SEATS.indexOf(absSeat);
+    if (absIdx === -1) return absSeat;
     return SEATS[((absIdx - myIdx) + 4) % 4];
 }
 
@@ -2280,11 +2282,16 @@ function placeCard(pos, card) {
     const trickArea = document.getElementById('trickArea');
     const cardHTML = getCardHTML(card, false, true);
     const div = document.createElement('div');
-    div.className = 'trick-card ' + pos;
+    // Use visual position so host sees correctly too (host is always south=south)
+    const visualPos = seatToVisual(pos);
+    div.className = 'trick-card ' + visualPos;
     div.innerHTML = cardHTML;
     trickArea.appendChild(div);
 
     renderHand(pos);
+
+    // Push after every card so guests see it immediately
+    if (MP.active && MP.isHost) MP.pushState();
 }
 
 function advanceTurn() {
@@ -2295,8 +2302,13 @@ function advanceTurn() {
         const currentIdx = PLAY_ORDER.indexOf(gameState.currentPlayer);
         const nextIdx = (currentIdx + 1) % 4;
         gameState.currentPlayer = PLAY_ORDER[nextIdx];
-        if (MP.active && MP.isHost) MP.pushState();
-        nextTurn();
+        if (MP.active && MP.isHost) {
+            MP.pushState().then(() => {
+                setTimeout(() => nextTurn(), 150); // small delay so guest receives state
+            });
+        } else {
+            nextTurn();
+        }
     }
 }
 
