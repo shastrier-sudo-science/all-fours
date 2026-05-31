@@ -1078,11 +1078,14 @@ function applyRemoteState(state) {
     const SEATS = ['south', 'west', 'north', 'east'];
     const myBase = MP.active && !MP.isHost ? MP.myPosition : 'south';
     const myIdx = SEATS.indexOf(myBase);
-    Object.entries(state.trickCards || {}).forEach(([pos, card]) => {
+    const trickEntries = Object.entries(state.trickCards || {});
+    console.log('[GUEST] Rendering trick cards:', trickEntries.length, 'myBase:', myBase, 'myIdx:', myIdx, 'trickArea exists:', !!trickArea);
+    trickEntries.forEach(([pos, card]) => {
         const div = document.createElement('div');
         const absIdx = SEATS.indexOf(pos);
         const relIdx = ((absIdx - myIdx) + 4) % 4;
         const relPos = SEATS[relIdx];
+        console.log('[GUEST] trick card pos:', pos, '→ visual:', relPos, 'card:', card?.rank, card?.suit);
         div.className = 'trick-card ' + relPos;
         div.innerHTML = getCardHTML(card, false, true);
         trickArea.appendChild(div);
