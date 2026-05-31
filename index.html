@@ -713,6 +713,7 @@ const MP = {
     async pushState() {
         if (!this.isHost || !this.roomCode || !this._ready()) return;
         try {
+            console.log('[HOST] pushState phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'trickCards:', Object.keys(gameState.trickCards||{}).length);
             await _fbSet('rooms/' + this.roomCode + '/state', this.serializeState());
         } catch(e) { console.error('pushState:', e); }
     },
@@ -921,7 +922,7 @@ async function hostStartGame() {
     });
 
     await _fbSet('rooms/' + MP.roomCode + '/started', true);
-
+    console.log('[HOST] Game started, room:', MP.roomCode, 'calling beginCutForJack');
     hostListenForMoves();
     beginCutForJack();
 }
@@ -996,12 +997,22 @@ function hostApplyGuestCard(pos, card) {
 
 // ── Guest: apply state pushed by host ──────────────────────────────────────
 function guestListenForState() {
-    if (!MP.roomCode || !MP._ready()) return;
-    MP.listen('rooms/' + MP.roomCode + '/state', snap => {
+    console.log('[GUEST] guestListenForState called. roomCode:', MP.roomCode, '_ready:', MP._ready());
+    if (!MP.roomCode || !MP._ready()) {
+        console.error('[GUEST] ABORT — roomCode or _db missing');
+        return;
+    }
+    const path = 'rooms/' + MP.roomCode + '/state';
+    console.log('[GUEST] Attaching listener to:', path);
+    MP.listen(path, snap => {
+        console.log('[GUEST] State snapshot fired. exists:', snap.exists(), 'val:', JSON.stringify(snap.val())?.slice(0,120));
         const state = snap.val();
-        if (!state || !state.phase || state.phase === 'idle') return;
-        // Transition from lobby to game screen on first real state push
+        if (!state || !state.phase || state.phase === 'idle') {
+            console.log('[GUEST] Ignoring state — phase:', state?.phase);
+            return;
+        }
         if (!MP.active) {
+            console.log('[GUEST] First real state — transitioning to game screen');
             MP.active = true;
             showScreen('gameScreen');
             resetGameState();
@@ -1011,6 +1022,7 @@ function guestListenForState() {
 }
 
 function applyRemoteState(state) {
+    console.log('[GUEST] applyRemoteState phase:', state.phase, 'currentPlayer:', state.currentPlayer, 'myPos:', MP.myPosition, 'trickCards:', Object.keys(state.trickCards||{}).length);
     // Merge remote state into local gameState
     Object.assign(gameState, {
         deck: state.deck || [],
