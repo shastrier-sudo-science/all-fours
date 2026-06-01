@@ -1022,6 +1022,7 @@ function guestListenForState() {
 }
 
 function applyRemoteState(state) {
+    try {
     console.log('[GUEST] applyRemoteState phase:', state.phase, 'currentPlayer:', state.currentPlayer, 'myPos:', MP.myPosition, 'trickCards:', Object.keys(state.trickCards||{}).length);
     // Merge remote state into local gameState
     Object.assign(gameState, {
@@ -1070,7 +1071,16 @@ function applyRemoteState(state) {
         });
     }
     renderAllHands();
-    if (state.trumpSuit) showTrumpIndicator(state.trumpSuit);
+    if (state.trumpSuit) {
+        try {
+            const ti = document.getElementById('trumpIndicator');
+            const ts = document.getElementById('trumpSuitSymbol');
+            const tn = document.getElementById('trumpSuitName');
+            if (ti) ti.style.display = 'flex';
+            if (ts) ts.textContent = {'spades':'♠','hearts':'♥','diamonds':'♦','clubs':'♣'}[state.trumpSuit] || state.trumpSuit;
+            if (tn) tn.textContent = state.trumpSuit.charAt(0).toUpperCase() + state.trumpSuit.slice(1);
+        } catch(e) { console.warn('trumpIndicator:', e); }
+    }
     if (state.currentPlayer) showTurnIndicator(state.currentPlayer);
     // Render trick cards on table — rotate positions to guest's perspective
     const trickArea = document.getElementById('trickArea');
@@ -1098,6 +1108,7 @@ function applyRemoteState(state) {
         gameState.humanLocked = false;
         renderHand(MP.myPosition, true);
     }
+    } catch(e) { console.error('[GUEST] applyRemoteState crash:', e); }
 }
 
 function lobbyCancel() {
