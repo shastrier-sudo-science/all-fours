@@ -700,13 +700,17 @@ const MP = {
     },
 
     async sendMove(type, payload) {
-        if (!this.roomCode || !this._ready()) return;
-        try {
-            await _fbSet('rooms/' + this.roomCode + '/pendingMove', {
-                type, payload, from: this.myPosition, ts: Date.now()
-            });
-        } catch(e) { console.error('sendMove:', e); }
-    },
+    if (!this.roomCode || !this._ready()) return;
+    try {
+        await _fbSet('rooms/' + this.roomCode + '/pendingMove', {
+            type, payload, from: this.myPosition, ts: Date.now()
+        });
+        console.log('[MP] Move sent successfully:', type);
+    } catch(e) {
+        console.error('[MP] FAILED to send move:', e.message);
+        // Optionally show an alert to the player
+		}
+	},
 
     async clearMove() {
         if (!this.roomCode || !this._ready()) return;
