@@ -1007,7 +1007,14 @@ function seatToVisual(absSeat) {
 
 function applyRemoteState(state) {
     try {
+        // Prevent flickering from older states
         if (gameState._ts && state._ts && state._ts <= gameState._ts) return;
+
+        // Clear any pending move resend timeouts
+        if (gameState._retryTimeout) {
+            gameState._retryTimeout.forEach(t => clearTimeout(t));
+            gameState._retryTimeout = [];
+        }
 
         Object.assign(gameState, {
             deck: state.deck || [],
@@ -1883,12 +1890,27 @@ function humanPlayCard(cardIndex) {
         return;
     }
 
+    // Inside humanPlayCard, after MP.sendMove... (guest branch)
     if (MP.active && !MP.isHost) {
-        MP.sendMove('playCard', { pos: myPos, card });
-        gameState.humanLocked = true;
-        renderHand(myPos);
-        return;
-    }
+    MP.sendMove('playCard', { pos: myPos, card });
+    gameState.humanLocked = true;
+    renderHand(myPos);
+
+    // Safety timeout: if no state update within 5 seconds, resend or warn
+    const retryTimeout = setTimeout(() => {
+    if (gameState.humanLocked && gameState.currentPlayer === myPos) {
+            console.warn('[GUEST] Move not processed after 5s – resending');
+            MP.sendMove('playCard', { pos: myPos, card });
+            // Optionally show a message
+            showMessage('Resending move...', 'Waiting for host response');
+        }
+    }, 5000);
+
+    // Store the timeout so we can clear it when state arrives (in applyRemoteState)
+    if (!gameState._retryTimeout) gameState._retryTimeout = [];
+    gameState._retryTimeout.push(retryTimeout);
+    return;
+}
 
     if (gameRules.underTrump !== 'none') {
         const undertrumpCheck = checkUndertrump(myPos, card);
