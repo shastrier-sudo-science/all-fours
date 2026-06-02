@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <link rel="icon" href="data:,">
     <title>All Fours - Trinidad Rules</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -99,22 +100,6 @@
         .south-hand .card.playable { border: 2px solid var(--accent-glow); box-shadow: 0 0 10px rgba(240,192,64,0.5); }
         .south-hand .card.playable:hover, .south-hand .card.playable:active { transform: translateY(-16px) scale(1.05) !important; box-shadow: 0 0 20px rgba(240,192,64,0.9) !important; z-index: 100 !important; }
         .south-hand.nine-cards { height: 90px; }
-        /* Corner peek labels */
-        .card-corner { position: absolute; display: flex; flex-direction: column; align-items: center; line-height: 1; }
-        .card-corner.top-left { top: 4px; left: 5px; }
-        .card-corner.bottom-right { bottom: 4px; right: 5px; transform: rotate(180deg); }
-        .corner-rank { font-size: 0.85rem; font-weight: 900; line-height: 1; }
-        .corner-suit { font-size: 0.8rem; line-height: 1; }
-        /* Non-south areas: hide corners, show center rank/suit */
-        .trick-card .card-corner,
-        .player-north .card-corner,
-        .player-east .card-corner,
-        .player-west .card-corner { display: none; }
-        /* Trick area and AI hands: show center labels */
-        .trick-card .rank, .trick-card .suit,
-        .player-north .rank, .player-north .suit,
-        .player-east .rank, .player-east .suit,
-        .player-west .rank, .player-west .suit { display: flex !important; }
         .player-west { left: 5px; top: 50%; transform: translateY(-50%); }
         .player-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,0.4); }
         .player-label.active { background: var(--accent); color: var(--bg); animation: pulse 1s infinite; }
@@ -633,10 +618,7 @@
 <script>
 
 // ==================== FIREBASE + MULTIPLAYER ENGINE ====================
-// Firebase compat SDK loaded via CDN at bottom of <body>
-// We defer all Firebase calls until after SDK loads
-
-let _db = null;  // set when Firebase ready
+let _db = null;
 
 function _fbReady() { return _db !== null; }
 function _fbRef(path) { return _db.ref(path); }
@@ -645,7 +627,7 @@ function _fbGet(path) { return _db.ref(path).once('value'); }
 function _fbOn(path, cb) {
     const r = _db.ref(path);
     r.on('value', cb);
-    return () => r.off('value', cb);  // returns a real unsubscribe function
+    return () => r.off('value', cb);
 }
 function _fbDel(path) { return _db.ref(path).remove(); }
 function _fbDisc(path) { _db.ref(path).onDisconnect().remove(); }
@@ -659,7 +641,7 @@ const MP = {
     myName: '',
     roomRef: null,
     _listeners: [],
-    SEAT_ORDER: ['south', 'west', 'north', 'east'],
+    SEAT_ORDER: ['south', 'east', 'north', 'west'],
 
     _ready() { return _fbReady(); },
 
@@ -685,6 +667,7 @@ const MP = {
             hands: gameState.hands,
             trumpSuit: gameState.trumpSuit || null,
             originalTrumpSuit: gameState.originalTrumpSuit || null,
+            originalTrumpRank: gameState.originalTrumpRank || null,
             dealer: gameState.dealer || null,
             currentPlayer: gameState.currentPlayer || null,
             trickCards: gameState.trickCards || {},
@@ -712,7 +695,6 @@ const MP = {
     async pushState() {
         if (!this.isHost || !this.roomCode || !this._ready()) return;
         try {
-            console.log('[HOST] pushState phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'trickCards:', Object.keys(gameState.trickCards||{}).length);
             await _fbSet('rooms/' + this.roomCode + '/state', this.serializeState());
         } catch(e) { console.error('pushState:', e); }
     },
@@ -856,7 +838,7 @@ async function lobbyJoinGame() {
         return;
     }
 
-    const SEAT_ORDER = ['south', 'west', 'north', 'east'];
+    const SEAT_ORDER = ['south', 'east', 'north', 'west'];
     const mySeat = SEAT_ORDER.find(s => !takenSeats.includes(s));
     if (!mySeat) {
         document.getElementById('joinStatus').textContent = '❌ No seats available.';
@@ -883,13 +865,12 @@ async function lobbyJoinGame() {
         renderLobbyPlayers('guestPlayerList', snap.val() || {});
     });
 
-    // Single state listener — handles transition to game AND all in-game updates
     guestListenForState();
 }
 
 function renderLobbyPlayers(containerId, players) {
-    const seats = MP.SEAT_ORDER;
-    const seatNames = { south: 'South', west: 'West', north: 'North', east: 'East' };
+    const seats = ['south', 'east', 'north', 'west'];
+    const seatNames = { south: 'South', east: 'East', north: 'North', west: 'West' };
     const container = document.getElementById(containerId);
     if (!container) return;
     container.innerHTML = seats.map(seat => {
@@ -912,16 +893,17 @@ async function hostStartGame() {
 
     showScreen('gameScreen');
     resetGameState();
-    gameState.players = players;  // store for serialization
+    gameState.players = players;
     updateScoreDisplay();
 
     Object.entries(players).forEach(([seat, data]) => {
-        const el = document.getElementById('label' + seat.charAt(0).toUpperCase() + seat.slice(1));
+        const visual = seatToVisual(seat);
+        const cap = visual.charAt(0).toUpperCase() + visual.slice(1);
+        const el = document.getElementById('label' + cap);
         if (el) el.textContent = data.name;
     });
 
     await _fbSet('rooms/' + MP.roomCode + '/started', true);
-    console.log('[HOST] Game started, room:', MP.roomCode, 'calling beginCutForJack');
     hostListenForMoves();
     beginCutForJack();
 }
@@ -944,7 +926,6 @@ function hostListenForMoves() {
 
         if (move.type === 'playCard') {
             const { pos, card } = move.payload;
-            console.log('[HOST] received playCard from', pos, 'card:', card?.rank, card?.suit, 'currentPlayer:', gameState.currentPlayer, 'phase:', gameState.phase);
             const hand = gameState.hands[pos];
             const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
             if (idx >= 0 && gameState.phase === 'play' && gameState.currentPlayer === pos) {
@@ -975,43 +956,13 @@ function hostListenForMoves() {
     });
 }
 
-function hostApplyGuestCard(pos, card) {
-    // Find card in hand and play it
-    const hand = gameState.hands[pos];
-    const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
-    if (idx < 0) return;
-    if (!canPlayCard(pos, hand[idx])) return;
-
-    hand.splice(idx, 1);
-    placeCard(pos, hand[idx] || card); // use original card obj
-    // Re-find since we spliced
-    const cardObj = card;
-    gameState.trickCards[pos] = cardObj;
-    if (!gameState.ledSuit) gameState.ledSuit = cardObj.suit;
-    gameState.hands[pos] = hand;
-    renderHand(pos);
-    if (gameRules.coach) logCoachPlay(pos, cardObj, hand);
-    advanceTurn();
-}
-
 // ── Guest: apply state pushed by host ──────────────────────────────────────
 function guestListenForState() {
-    console.log('[GUEST] guestListenForState called. roomCode:', MP.roomCode, '_ready:', MP._ready());
-    if (!MP.roomCode || !MP._ready()) {
-        console.error('[GUEST] ABORT — roomCode or _db missing');
-        return;
-    }
-    const path = 'rooms/' + MP.roomCode + '/state';
-    console.log('[GUEST] Attaching listener to:', path);
-    MP.listen(path, snap => {
-        console.log('[GUEST] State snapshot fired. exists:', snap.exists(), 'val:', JSON.stringify(snap.val())?.slice(0,120));
+    if (!MP.roomCode || !MP._ready()) return;
+    MP.listen('rooms/' + MP.roomCode + '/state', snap => {
         const state = snap.val();
-        if (!state || !state.phase || state.phase === 'idle') {
-            console.log('[GUEST] Ignoring state — phase:', state?.phase);
-            return;
-        }
+        if (!state || !state.phase || state.phase === 'idle') return;
         if (!MP.active) {
-            console.log('[GUEST] First real state — transitioning to game screen');
             MP.active = true;
             showScreen('gameScreen');
             resetGameState();
@@ -1020,93 +971,104 @@ function guestListenForState() {
     });
 }
 
+// Map absolute seat to visual slot relative to this player's perspective
+function seatToVisual(absSeat) {
+    if (!MP.active || MP.isHost || !MP.myPosition) return absSeat;
+    const order = ['south', 'east', 'north', 'west']; 
+    const myIdx = order.indexOf(MP.myPosition);
+    const absIdx = order.indexOf(absSeat);
+    if (myIdx === -1 || absIdx === -1) return absSeat;
+    return order[((absIdx - myIdx) + 4) % 4];
+}
+
 function applyRemoteState(state) {
     try {
-    console.log('[GUEST] applyRemoteState phase:', state.phase, 'currentPlayer:', state.currentPlayer, 'myPos:', MP.myPosition, 'trickCards:', Object.keys(state.trickCards||{}).length);
-    // Merge remote state into local gameState
-    Object.assign(gameState, {
-        deck: state.deck || [],
-        hands: state.hands || { north:[], east:[], south:[], west:[] },
-        trumpSuit: state.trumpSuit || null,
-        originalTrumpSuit: state.originalTrumpSuit || null,
-        dealer: state.dealer || null,
-        currentPlayer: state.currentPlayer || null,
-        trickCards: state.trickCards || {},
-        ledSuit: state.ledSuit || null,
-        tricksPlayed: state.tricksPlayed || 0,
-        cardsPerPlayer: state.cardsPerPlayer || 6,
-        team1Score: state.team1Score || 0,
-        team2Score: state.team2Score || 0,
-        roundScores: state.roundScores || { team1: 0, team2: 0 },
-        tricksWon: state.tricksWon || { team1: [], team2: [] },
-        phase: state.phase || 'idle',
-        humanLocked: (state.phase === 'play' && state.currentPlayer !== MP.myPosition),
-        begged: state.begged || false,
-        cutCards: state.cutCards || {},
-        renegeTeam: state.renegeTeam || null,
-        coachLog: state.coachLog || [],
-        highTrump: state.highTrump || null,
-        lowTrump: state.lowTrump || null,
-        jackHolder: state.jackHolder !== undefined ? state.jackHolder : null
-    });
-    if (state.rules) Object.assign(gameRules, state.rules);
-    updateScoreDisplay();
-    // Remap player labels to guest's visual perspective
-    if (MP.active && !MP.isHost && state.players) {
-        const SEATS = ['south', 'west', 'north', 'east'];
-        const visualNames = { south: 'YOU', west: 'Left', north: 'Partner', east: 'Right' };
-        SEATS.forEach(absSeat => {
-            const visual = seatToVisual(absSeat);
-            const cap = visual.charAt(0).toUpperCase() + visual.slice(1);
-            const el = document.getElementById('label' + cap);
-            if (el) {
-                const playerName = state.players[absSeat] ? state.players[absSeat].name : null;
-                if (visual === 'south') {
-                    el.textContent = 'YOU (' + (playerName || MP.myName) + ')';
-                } else {
-                    el.textContent = playerName ? playerName : (absSeat.charAt(0).toUpperCase() + absSeat.slice(1) + ' (AI)');
-                }
-            }
+        if (gameState._ts && state._ts && state._ts <= gameState._ts) return;
+
+        Object.assign(gameState, {
+            deck: state.deck || [],
+            hands: state.hands || { north:[], east:[], south:[], west:[] },
+            trumpSuit: state.trumpSuit || null,
+            originalTrumpSuit: state.originalTrumpSuit || null,
+            originalTrumpRank: state.originalTrumpRank || null,
+            dealer: state.dealer || null,
+            currentPlayer: state.currentPlayer || null,
+            trickCards: state.trickCards || {},
+            ledSuit: state.ledSuit || null,
+            tricksPlayed: state.tricksPlayed || 0,
+            cardsPerPlayer: state.cardsPerPlayer || 6,
+            team1Score: state.team1Score || 0,
+            team2Score: state.team2Score || 0,
+            roundScores: state.roundScores || { team1: 0, team2: 0 },
+            tricksWon: state.tricksWon || { team1: [], team2: [] },
+            phase: state.phase || 'idle',
+            humanLocked: (state.phase === 'play' && state.currentPlayer !== MP.myPosition),
+            begged: state.begged || false,
+            cutCards: state.cutCards || {},
+            renegeTeam: state.renegeTeam || null,
+            coachLog: state.coachLog || [],
+            highTrump: state.highTrump || null,
+            lowTrump: state.lowTrump || null,
+            jackHolder: state.jackHolder !== undefined ? state.jackHolder : null,
+            _ts: state._ts
         });
-    }
-    renderAllHands();
-    if (state.trumpSuit) {
-        try {
-            const ti = document.getElementById('trumpIndicator');
-            const ts = document.getElementById('trumpSuitSymbol');
-            const tn = document.getElementById('trumpSuitName');
-            if (ti) ti.style.display = 'flex';
-            if (ts) ts.textContent = {'spades':'♠','hearts':'♥','diamonds':'♦','clubs':'♣'}[state.trumpSuit] || state.trumpSuit;
-            if (tn) tn.textContent = state.trumpSuit.charAt(0).toUpperCase() + state.trumpSuit.slice(1);
-        } catch(e) { console.warn('trumpIndicator:', e); }
-    }
-    if (state.currentPlayer) showTurnIndicator(state.currentPlayer);
-    // Render trick cards on table — rotate positions to guest's perspective
-    const trickArea = document.getElementById('trickArea');
-    trickArea.innerHTML = '';
-    const SEATS = ['south', 'west', 'north', 'east'];
-    const myBase = MP.active && !MP.isHost ? MP.myPosition : 'south';
-    const myIdx = SEATS.indexOf(myBase);
-    const trickEntries = Object.entries(state.trickCards || {});
-    console.log('[GUEST] Rendering trick cards:', trickEntries.length, 'myBase:', myBase, 'myIdx:', myIdx, 'trickArea exists:', !!trickArea);
-    trickEntries.forEach(([pos, card]) => {
-        const div = document.createElement('div');
-        const absIdx = SEATS.indexOf(pos);
-        const relIdx = ((absIdx - myIdx) + 4) % 4;
-        const relPos = SEATS[relIdx];
-        console.log('[GUEST] trick card pos:', pos, '→ visual:', relPos, 'card:', card?.rank, card?.suit);
-        div.className = 'trick-card ' + relPos;
-        div.innerHTML = getCardHTML(card, false, true);
-        trickArea.appendChild(div);
-    });
-    // Guest action buttons
-    if (state.phase === 'beg' && state.currentPlayer === MP.myPosition) {
-        document.getElementById('actionArea').style.display = 'flex';
-    }
-    if (state.phase === 'play' && state.currentPlayer === MP.myPosition) {
-        gameState.humanLocked = false;
-        renderHand(MP.myPosition, true);
-    }
+
+        if (state.rules) Object.assign(gameRules, state.rules);
+        updateScoreDisplay();
+
+        if (MP.active && !MP.isHost && state.players) {
+            const SEATS = ['south', 'east', 'north', 'west'];
+            SEATS.forEach(absSeat => {
+                const visual = seatToVisual(absSeat);
+                const cap = visual.charAt(0).toUpperCase() + visual.slice(1);
+                const el = document.getElementById('label' + cap);
+                if (el) {
+                    const playerName = state.players[absSeat] ? state.players[absSeat].name : null;
+                    if (visual === 'south') {
+                        el.textContent = 'YOU (' + (playerName || MP.myName) + ')';
+                    } else {
+                        el.textContent = playerName ? playerName : (absSeat.charAt(0).toUpperCase() + absSeat.slice(1) + ' (AI)');
+                    }
+                }
+            });
+        }
+        
+        renderAllHands();
+        
+        if (state.trumpSuit) {
+            try {
+                const ti = document.getElementById('trumpIndicator');
+                const display = document.getElementById('trumpCardDisplay');
+                if (ti && display) {
+                    ti.style.display = 'flex';
+                    const svg = cardSVG(state.originalTrumpRank || 'A', state.trumpSuit, false); 
+                    display.innerHTML = '<img src="' + svgToDataURI(svg) + '" style="width:100%;height:100%;display:block;"/>';
+                }
+            } catch(e) { console.warn('trumpIndicator:', e); }
+        }
+        
+        if (state.currentPlayer) showTurnIndicator(state.currentPlayer);
+        
+        const trickArea = document.getElementById('trickArea');
+        trickArea.innerHTML = '';
+        const trickEntries = Object.entries(state.trickCards || {});
+        
+        trickEntries.forEach(([pos, card]) => {
+            const div = document.createElement('div');
+            const visualPos = seatToVisual(pos);
+            div.className = 'trick-card ' + visualPos;
+            div.innerHTML = getCardHTML(card, false, true);
+            trickArea.appendChild(div);
+        });
+
+        document.getElementById('actionArea').style.display = 'none';
+        if (state.phase === 'beg' && state.currentPlayer === MP.myPosition) {
+            document.getElementById('actionArea').style.display = 'flex';
+        }
+        if (state.phase === 'play' && state.currentPlayer === MP.myPosition) {
+            gameState.humanLocked = false;
+            renderHand(MP.myPosition, true);
+        }
     } catch(e) { console.error('[GUEST] applyRemoteState crash:', e); }
 }
 
@@ -1115,9 +1077,6 @@ function lobbyCancel() {
     showLobby();
     lobbyShowStep1();
 }
-
-// ── Patch nextTurn to handle MP guests ──────────────────────────────────────
-// (injected after game functions load — see bottom of script)
 
 // ==================== GAME CONFIGURATION ====================
 const DEFAULT_RULES = {
@@ -1145,10 +1104,8 @@ const SUIT_SYMBOLS = { spades: '♠', hearts: '♥', clubs: '♣', diamonds: '�
 const SUIT_NAMES = { spades: 'Spades', hearts: 'Hearts', clubs: 'Clubs', diamonds: 'Diamonds' };
 const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 const RANK_VALUES = { '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14 };
-// Kicking: immediate points for dealer's team when trump card is turned up at deal time
 const KICKING_STANDARD = { 'A': 1, '6': 2, 'J': 3 };
 const KICKING_TOBAGO   = { 'A': 1, '2': 2, 'J': 3 };
-// Game point: pip values used to determine which team wins the game point at end of round
 const GAME_POINT_VALUES = { 'A': 4, 'K': 3, 'Q': 2, 'J': 1, '10': 10 };
 
 function createDeck() {
@@ -1169,14 +1126,11 @@ function shuffle(deck) {
     return deck;
 }
 
-
 // ==================== SVG CARD RENDERING SYSTEM ====================
-// viewBox 100×140 — large internal canvas, CSS controls display size
 const VW = 100, VH = 140;
 const SYM = { spades: '♠', hearts: '♥', clubs: '♣', diamonds: '♦' };
 const RED_SUITS = { hearts: true, diamonds: true };
 
-// Pip positions as [cx%, cy%] of card dimensions
 const PIP_LAYOUTS = {
     'A': [[50,50]],
     '2': [[50,25],[50,75]],
@@ -1191,7 +1145,7 @@ const PIP_LAYOUTS = {
 };
 
 function pipFontSize(rank) {
-    if (rank === 'A')  return 0;   // ace uses special large symbol
+    if (rank === 'A')  return 0;
     if (['2','3'].includes(rank)) return 22;
     if (['4','5','6'].includes(rank)) return 20;
     return 16;
@@ -1239,7 +1193,6 @@ function cardSVG(rank, suit, playable) {
     const isFace = ['J','Q','K'].includes(rank);
     const isAce  = rank === 'A';
 
-    // Corner: rank on top, suit below — large and crisp
     const corner = (cx, cy, rot) => `
         <g transform="translate(${cx},${cy}) rotate(${rot})">
             <text y="-3" text-anchor="middle" font-size="15" font-weight="900"
@@ -1248,10 +1201,8 @@ function cardSVG(rank, suit, playable) {
                 fill="${color}" font-family="Arial,sans-serif">${sym}</text>
         </g>`;
 
-    // Centre artwork
     let centre = '';
     if (isAce) {
-        // Large single suit symbol — unmissable
         centre = `<text x="50" y="72" text-anchor="middle" dominant-baseline="central"
             font-size="52" fill="${color}" opacity="0.92">${sym}</text>`;
     } else if (isFace) {
@@ -1304,18 +1255,15 @@ function getCardHTML(card, playable, faceUp) {
 // ==================== GAME STATE ====================
 let gameState = {
     deck: [], hands: { north: [], east: [], south: [], west: [] },
-    trumpSuit: null, originalTrumpSuit: null, dealer: null, currentPlayer: null,
+    trumpSuit: null, originalTrumpSuit: null, originalTrumpRank: null, dealer: null, currentPlayer: null,
     trickCards: {}, ledSuit: null, tricksPlayed: 0, cardsPerPlayer: 6,
     team1Score: 0, team2Score: 0, roundScores: { team1: 0, team2: 0 },
     tricksWon: { team1: [], team2: [] }, phase: 'idle',
     humanLocked: false, begged: false, cutCards: {}, renegeTeam: null, coachLog: [],
-    // High / Low / Jack tracking — set after all cards are dealt, before play begins
-    highTrump: null,   // { pos, card } — holder of highest trump dealt
-    lowTrump: null,    // { pos, card } — holder of lowest trump dealt
-    jackHolder: null   // pos — who held jack of trumps at deal time
+    highTrump: null, lowTrump: null, jackHolder: null
 };
 
-const PLAY_ORDER = ['south', 'east', 'north', 'west']; // anticlockwise: south → east → north → west
+const PLAY_ORDER = ['south', 'east', 'north', 'west'];
 const TEAM_MAP = { south: 1, north: 1, west: 2, east: 2 };
 
 // ==================== SCREEN MANAGEMENT ====================
@@ -1435,11 +1383,12 @@ function startGame() {
 function resetGameState() {
     gameState = {
         deck: [], hands: { north: [], east: [], south: [], west: [] },
-        trumpSuit: null, dealer: null, currentPlayer: null,
+        trumpSuit: null, originalTrumpSuit: null, originalTrumpRank: null, dealer: null, currentPlayer: null,
         trickCards: {}, ledSuit: null, tricksPlayed: 0, cardsPerPlayer: 6,
         team1Score: 0, team2Score: 0, roundScores: { team1: 0, team2: 0 },
         tricksWon: { team1: [], team2: [] }, phase: 'idle',
-        humanLocked: false, begged: false, cutCards: {}, renegeTeam: null, coachLog: []
+        humanLocked: false, begged: false, cutCards: {}, renegeTeam: null, coachLog: [],
+        highTrump: null, lowTrump: null, jackHolder: null
     };
     clearTable();
 }
@@ -1472,12 +1421,11 @@ function showTurnIndicator(pos) {
     if (label) label.classList.add('active');
 }
 
-// ==================== CUT FOR JACK (FIRST JACK WINS) ====================
+// ==================== CUT FOR JACK ====================
 function beginCutForJack() {
     gameState.phase = 'cut';
     gameState.deck = shuffle(createDeck());
 
-    // Push immediately so guests transition from lobby to game screen
     if (MP.active && MP.isHost) MP.pushState();
 
     const cutCards = {};
@@ -1490,8 +1438,6 @@ function beginCutForJack() {
             firstJackPlayer = pos;
         }
     }
-
-    gameState.cutCards = cutCards;
 
     let dealRound = 1;
     while (!firstJackPlayer && dealRound < 10) {
@@ -1537,7 +1483,6 @@ function beginCutForJack() {
 
 // ==================== DEALING ====================
 
-// Deal N cards (round-robin) to all players, reshuffling if deck runs dry
 function dealRoundRobin(cardsEach) {
     for (let i = 0; i < cardsEach; i++) {
         for (const pos of PLAY_ORDER) {
@@ -1557,13 +1502,11 @@ function sortAllHands() {
     }
 }
 
-// Turn up one card from deck to determine trump; returns the card
 function turnUpCard() {
     if (gameState.deck.length === 0) gameState.deck = shuffle(createDeck());
     return gameState.deck.pop();
 }
 
-// Score a turned-up trump card immediately for dealer's team (kicking)
 function scoreKickCard(card) {
     const table = gameRules.kicking === 'tobago' ? KICKING_TOBAGO : KICKING_STANDARD;
     const pts = table[card.rank] || 0;
@@ -1575,9 +1518,9 @@ function scoreKickCard(card) {
     return pts;
 }
 
-// Apply a new trump suit and update the UI trump card display
 function applyTrump(card) {
     gameState.trumpSuit = card.suit;
+    gameState.originalTrumpRank = card.rank;
     const svg = cardSVG(card.rank, card.suit, false);
     const uri = svgToDataURI(svg);
     const display = document.getElementById('trumpCardDisplay');
@@ -1586,7 +1529,6 @@ function applyTrump(card) {
     document.getElementById('trumpIndicator').style.display = 'flex';
 }
 
-// Scan all hands and record who holds the highest trump, lowest trump, and jack of trumps
 function recordTrumpHolders() {
     const trump = gameState.trumpSuit;
     let high = null, low = null, jackPos = null;
@@ -1607,13 +1549,12 @@ function beginDeal() {
     gameState.phase = 'deal';
     if (gameState.deck.length < 30) gameState.deck = shuffle(createDeck());
 
-    // Deal 6 cards to each player
     dealRoundRobin(6);
     gameState.cardsPerPlayer = 6;
 
-    // Turn up trump card and score immediately if it kicks (ace/six/jack)
     const trumpCard = turnUpCard();
     gameState.originalTrumpSuit = trumpCard.suit;
+    gameState.originalTrumpRank = trumpCard.rank;
     applyTrump(trumpCard);
 
     const kickPts = scoreKickCard(trumpCard);
@@ -1632,26 +1573,13 @@ function renderAllHands() {
     for (const pos of PLAY_ORDER) renderHand(pos);
 }
 
-// Map absolute seat to visual slot relative to this player's perspective
-function seatToVisual(absSeat) {
-    if (!MP.active || MP.isHost || !MP.myPosition) return absSeat;
-    const SEATS = ['south', 'west', 'north', 'east'];
-    const myIdx = SEATS.indexOf(MP.myPosition);
-    if (myIdx === -1) return absSeat;
-    const absIdx = SEATS.indexOf(absSeat);
-    if (absIdx === -1) return absSeat;
-    return SEATS[((absIdx - myIdx) + 4) % 4];
-}
-
 function renderHand(pos, highlightPlayable) {
     const visualPos = seatToVisual(pos);
     const container = document.getElementById('hand' + visualPos.charAt(0).toUpperCase() + visualPos.slice(1));
     const hand = gameState.hands[pos];
 
-    // In MP: only show face-up cards for your own seat
     const myPos = MP.active ? MP.myPosition : 'south';
     const isMyHand = pos === myPos;
-    // Solo mode: south is always face-up, others always backs
     const showFaceUp = MP.active ? isMyHand : pos === 'south';
 
     if (isMyHand) {
@@ -1664,7 +1592,6 @@ function renderHand(pos, highlightPlayable) {
         let playable = false;
         if (showFaceUp && highlightPlayable && gameState.phase === 'play' && gameState.currentPlayer === myPos) {
             playable = canPlayCard(myPos, card);
-            console.log('[renderHand] card', card.rank, card.suit, 'playable:', playable, 'humanLocked:', gameState.humanLocked);
         }
         html += getCardHTML(card, playable, showFaceUp);
     }
@@ -1688,7 +1615,6 @@ function renderHand(pos, highlightPlayable) {
             el.style.zIndex = idx + 1;
             el.style.transform = 'rotate(' + angle + 'deg)';
             el.addEventListener('click', function() {
-                console.log('[CARD CLICK] idx:', idx, 'humanLocked:', gameState.humanLocked, 'phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'myPos:', MP.myPosition);
                 humanPlayCard(idx);
             });
         });
@@ -1698,8 +1624,6 @@ function renderHand(pos, highlightPlayable) {
 // ==================== BEG/STAND PHASE ====================
 function beginBegPhase() {
     gameState.phase = 'beg';
-
-    // Beg/Stand decision belongs to the player LEFT of the dealer
     const dealerIdx = PLAY_ORDER.indexOf(gameState.dealer);
     const begPlayer = PLAY_ORDER[(dealerIdx + 1) % 4];
     gameState.currentPlayer = begPlayer;
@@ -1708,32 +1632,25 @@ function beginBegPhase() {
     const myPos = MP.active ? MP.myPosition : 'south';
 
     if (MP.active && MP.isHost) {
-        // Host: check if begPlayer seat is human or AI
-        _fbGet('rooms/' + MP.roomCode + '/players/' + begPlayer).then(snap => {
-            const isHuman = snap.exists();
-            if (!isHuman && begPlayer !== 'south') {
-                setTimeout(() => aiBegDecision(begPlayer), getDelay(1200, 'think'));
-            } else if (begPlayer === 'south' || (isHuman && begPlayer === MP.myPosition)) {
-                _showBegUI(begPlayer);
-            } else {
-                // Another human seat — host waits via Firebase
-                gameState.humanLocked = true;
-                MP.pushState();
-            }
-        });
+        const isHuman = !!(gameState.players && gameState.players[begPlayer]);
+        if (!isHuman && begPlayer !== 'south') {
+            MP.pushState();
+            setTimeout(() => aiBegDecision(begPlayer), getDelay(1200, 'think'));
+        } else if (begPlayer === 'south' || (isHuman && begPlayer === MP.myPosition)) {
+            MP.pushState();
+            _showBegUI(begPlayer);
+        } else {
+            gameState.humanLocked = true;
+            MP.pushState();
+        }
         return;
     }
 
     if (MP.active && !MP.isHost) {
-        // Guest: only show beg UI if it's my turn
-        if (begPlayer === myPos) {
-            _showBegUI(begPlayer);
-        }
-        // Otherwise Firebase state update will trigger the UI
+        if (begPlayer === myPos) _showBegUI(begPlayer);
         return;
     }
 
-    // SOLO MODE
     if (begPlayer === 'south') {
         _showBegUI(begPlayer);
     } else {
@@ -1758,7 +1675,7 @@ function aiBegDecision(pos) {
     const trumpCards = hand.filter(function(c) { return c.suit === gameState.trumpSuit; });
     const hasTrump = trumpCards.length > 0;
     const mustBeg = gameRules.forcedBeg && !hasTrump;
-    const shouldBeg = mustBeg || trumpCards.length < 2; // AI begs with weak trump holding
+    const shouldBeg = mustBeg || trumpCards.length < 2;
 
     const posName = pos.charAt(0).toUpperCase() + pos.slice(1);
     if (shouldBeg) {
@@ -1783,27 +1700,21 @@ function playerBeg() {
     setTimeout(function() { executeTrumpChange(); }, getDelay(1200, 'think'));
 }
 
-// Recursively deal 3 more + turn up new trump until a DIFFERENT suit is found
-// Per official rules: if same suit comes up again, deal 3 more and try again
 function executeTrumpChange() {
     const suitToReplace = gameState.trumpSuit;
 
-    // Deal 3 more cards to everyone
     dealRoundRobin(3);
     gameState.cardsPerPlayer += 3;
     renderAllHands();
 
-    // Turn up new trump card
     const newTrumpCard = turnUpCard();
     const kickPts = scoreKickCard(newTrumpCard);
 
     if (newTrumpCard.suit === suitToReplace) {
-        // Same suit — must deal 3 more and try again
         const kickMsg = kickPts ? ' (+' + kickPts + ' to dealer)' : '';
         showMessage(SUIT_NAMES[newTrumpCard.suit] + ' again!' + kickMsg, 'Dealing 3 more and trying again...');
         setTimeout(function() { executeTrumpChange(); }, getDelay(2000, 'think'));
     } else {
-        // New suit found — apply as trump and begin play
         applyTrump(newTrumpCard);
         const kickMsg = kickPts ? ' (+' + kickPts + ' to dealer)' : '';
         showMessage('New Trump: ' + SUIT_NAMES[newTrumpCard.suit] + ' ' + SUIT_SYMBOLS[newTrumpCard.suit] + kickMsg,
@@ -1836,10 +1747,8 @@ function beginPlayPhase() {
     gameState.renegeTeam = null;
     gameState.coachLog = [];
 
-    // Snapshot who holds the highest trump, lowest trump, and jack — for scoring at end of round
     recordTrumpHolders();
 
-    // First lead: anticlockwise left of dealer
     const dealerIdx = PLAY_ORDER.indexOf(gameState.dealer);
     gameState.currentPlayer = PLAY_ORDER[(dealerIdx + 1) % 4];
 
@@ -1857,41 +1766,26 @@ function nextTurn() {
     showTurnIndicator(pos);
 
     if (MP.active) {
-        // MULTIPLAYER MODE
         if (MP.isHost) {
-            // Host handles AI seats; human seats wait for Firebase move
-                // Check if current pos has a human player registered
-            _fbGet('rooms/' + MP.roomCode + '/players/' + pos).then(snap => {
-                const isHuman = snap.exists();
-                if (isHuman && pos !== 'south') {
-                    // Guest's turn — host waits for their move via Firebase
-                    gameState.humanLocked = true;
-                    renderAllHands();
-                    MP.pushState(); // push locked state so guest sees it's their turn
-                } else if (!isHuman && pos !== 'south') {
-                    // AI seat
-                    gameState.humanLocked = true;
-                    setTimeout(() => { aiPlayCard(pos); }, getDelay(1200, 'think'));
-                } else {
-                    // Host's own seat (south)
-                    gameState.humanLocked = false;
-                    renderHand('south', true);
-                }
-            });
-        } else {
-            // GUEST: just render — Firebase state drives everything
-            if (pos === MP.myPosition) {
-                gameState.humanLocked = false;
-                renderHand(MP.myPosition, true);
-            } else {
+            const isHuman = !!(gameState.players && gameState.players[pos]);
+            
+            if (isHuman && pos !== 'south') {
                 gameState.humanLocked = true;
                 renderAllHands();
+                MP.pushState();
+            } else if (!isHuman && pos !== 'south') {
+                gameState.humanLocked = true;
+                MP.pushState();
+                setTimeout(() => { aiPlayCard(pos); }, getDelay(1200, 'think'));
+            } else {
+                gameState.humanLocked = false;
+                renderHand('south', true);
+                MP.pushState();
             }
         }
         return;
     }
 
-    // SOLO MODE (original behaviour)
     if (pos === 'south') {
         gameState.humanLocked = false;
         renderHand('south', true);
@@ -1902,12 +1796,9 @@ function nextTurn() {
 }
 
 // ==================== CARD PLAYING LOGIC ====================
-// Authentic Trinidad Rules:
-// - Non-trump led: must follow led suit OR may play trump. Off-suit throw blocked if you hold led suit.
-// - Trump led: must follow with trump if you have any.
 function canPlayCard(pos, card) {
     const hand = gameState.hands[pos];
-    if (!gameState.ledSuit) return true; // leading — any card is legal
+    if (!gameState.ledSuit) return true;
 
     const ledSuit = gameState.ledSuit;
     const trumpSuit = gameState.trumpSuit;
@@ -1915,13 +1806,10 @@ function canPlayCard(pos, card) {
     const hasTrump = hand.some(function(c) { return c.suit === trumpSuit; });
 
     if (ledSuit === trumpSuit) {
-        // Trump was led — must follow trump if you have it
         if (hasTrump && card.suit !== trumpSuit) return false;
         return true;
     } else {
-        // Non-trump led — must follow led suit OR play trump; off-suit throw blocked if holding led suit
         if (hasLedSuit) {
-            // Can play led suit (legal) or trump (legal) — anything else is blocked
             if (card.suit !== ledSuit && card.suit !== trumpSuit) return false;
         }
         return true;
@@ -1938,25 +1826,22 @@ function getLegalCards(pos) {
     const hasTrump = hand.some(function(c) { return c.suit === trumpSuit; });
 
     if (ledSuit === trumpSuit) {
-        // Trump led — must follow trump
         if (hasTrump) return hand.filter(function(c) { return c.suit === trumpSuit; });
-        return hand.slice(); // no trump — play anything
+        return hand.slice();
     } else {
-        // Non-trump led — can play led suit or trump; off-suit blocked if holding led suit
         if (hasLedSuit) {
             return hand.filter(function(c) { return c.suit === ledSuit || c.suit === trumpSuit; });
         }
-        return hand.slice(); // no led suit — play anything (including trump or off-suit)
+        return hand.slice();
     }
 }
 
 // ==================== HUMAN PLAY ====================
 function humanPlayCard(cardIndex) {
-    console.log('[humanPlayCard] idx:', cardIndex, 'locked:', gameState.humanLocked, 'phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'myPos:', MP.active ? MP.myPosition : 'south');
-    if (gameState.humanLocked) { console.log('[humanPlayCard] BLOCKED by humanLocked'); return; }
+    if (gameState.humanLocked) return;
     const myPos = MP.active ? MP.myPosition : 'south';
-    if (gameState.currentPlayer !== myPos) { console.log('[humanPlayCard] BLOCKED currentPlayer mismatch'); return; }
-    if (gameState.phase !== 'play') { console.log('[humanPlayCard] BLOCKED wrong phase:', gameState.phase); return; }
+    if (gameState.currentPlayer !== myPos) return;
+    if (gameState.phase !== 'play') return;
 
     const hand = gameState.hands[myPos];
     if (cardIndex < 0 || cardIndex >= hand.length) return;
@@ -1975,14 +1860,12 @@ function humanPlayCard(cardIndex) {
     }
 
     if (MP.active && !MP.isHost) {
-        // GUEST: send move to host via Firebase, optimistic local render
         MP.sendMove('playCard', { pos: myPos, card });
         gameState.humanLocked = true;
         renderHand(myPos);
         return;
     }
 
-    // HOST or SOLO
     if (gameRules.underTrump !== 'none') {
         const undertrumpCheck = checkUndertrump(myPos, card);
         if (undertrumpCheck) {
@@ -2031,15 +1914,7 @@ function applyUndertrumpPenalty(pos) {
 }
 
 // ==================== AI PLAY ====================
-// ==================== AI ENGINE (3 DIFFICULTY TIERS) ====================
-// Easy  : "Yuh kinda stupid awha"     — random legal play
-// Normal: "They could hold they own"  — partner awareness, basic trump management
-// Hard  : "Them hadda be cheating"    — card counting, jack hunting, game-point math
-
-// ── Shared helpers ──────────────────────────────────────────────────────────
-
 function trickWinner() {
-    // Returns { pos, value } of current trick leader
     const trump = gameState.trumpSuit;
     const led   = gameState.ledSuit;
     let winner = null, best = -Infinity;
@@ -2076,9 +1951,6 @@ function pipValue(card) { return GAME_POINT_VALUES[card.rank] || 0; }
 
 function isHighValueCard(card) { return pipValue(card) > 0; }
 
-// ── Card Counter (Hard mode only) ───────────────────────────────────────────
-// Tracks every card that has been played so the Hard AI knows what's left
-
 function getPlayedCards() {
     const played = [];
     for (const team of [1, 2]) {
@@ -2094,7 +1966,6 @@ function getPlayedCards() {
 }
 
 function trumpsRemaining() {
-    // How many trump cards haven't been played yet (excluding my own hand)
     const played = getPlayedCards();
     let count = 0;
     for (const rank of RANKS) {
@@ -2113,67 +1984,52 @@ function opponentHasTrump(pos) {
     return false;
 }
 
-// ── EASY: "Yuh kinda stupid awha" ───────────────────────────────────────────
 function aiEasy(pos, legalCards) {
-    // 80% random, 20% avoid throwing the jack of trumps by accident
     const trump = gameState.trumpSuit;
     const jack = legalCards.find(c => c.rank === 'J' && c.suit === trump);
     if (jack && legalCards.length > 1 && Math.random() < 0.8) {
-        // Don't blindly throw the jack — pick something else randomly
         const others = legalCards.filter(c => !(c.rank === 'J' && c.suit === trump));
         return randomCard(others);
     }
     return randomCard(legalCards);
 }
 
-// ── NORMAL: "They could hold they own" ──────────────────────────────────────
 function aiNormal(pos, legalCards) {
     const trump   = gameState.trumpSuit;
     const myTeam  = TEAM_MAP[pos];
     const partner = getPartner(pos);
     const tw      = trickWinner();
-    const partnerLeading = tw.pos === partner;
-    const teamLeading    = tw.pos && TEAM_MAP[tw.pos] === myTeam;
+    const teamLeading = tw.pos && TEAM_MAP[tw.pos] === myTeam;
 
-    // ── Leading a trick ──────────────────────────────────────────────────
     if (!gameState.ledSuit) {
         const trumpCards = legalCards.filter(c => c.suit === trump);
         const nonTrump   = legalCards.filter(c => c.suit !== trump);
 
-        // Protect the Jack — never lead it unless it's the only trump
         const jack = trumpCards.find(c => c.rank === 'J');
         const safeHighTrump = trumpCards.filter(c => c.rank !== 'J' && c.value >= 12);
 
-        // Lead high trump to draw out opponents if we have strength
         if (safeHighTrump.length > 0 && trumpCards.length >= 3) {
             return highestCard(safeHighTrump);
         }
 
-        // Lead a high-value non-trump card to win pip points
         const highValue = nonTrump.filter(isHighValueCard);
         if (highValue.length > 0) return highestCard(highValue);
 
-        // Default: lead lowest non-trump
         return nonTrump.length > 0 ? lowestCard(nonTrump) : lowestCard(legalCards);
     }
 
-    // ── Following a trick ────────────────────────────────────────────────
     const best = tw.value;
 
-    // Partner is already winning — dump our lowest worthless card
     if (teamLeading) {
         const worthless = legalCards.filter(c => pipValue(c) === 0);
         return worthless.length > 0 ? lowestCard(worthless) : lowestCard(legalCards);
     }
 
-    // Opponents winning — try to take it back
     const winner = smallestWinner(legalCards, best);
 
     if (winner) {
-        // Don't over-trump with the Jack unless it's the only way
         const jack = legalCards.find(c => c.rank === 'J' && c.suit === trump);
         if (winner.rank === 'J' && winner.suit === trump) {
-            // Use Jack only if we can't win otherwise
             const nonJackWinners = legalCards.filter(c =>
                 canBeatCurrent(c, best) && !(c.rank === 'J' && c.suit === trump));
             if (nonJackWinners.length > 0) return lowestCard(nonJackWinners);
@@ -2181,12 +2037,10 @@ function aiNormal(pos, legalCards) {
         return winner;
     }
 
-    // Can't win — ditch lowest worthless
     const worthless = legalCards.filter(c => pipValue(c) === 0);
     return worthless.length > 0 ? lowestCard(worthless) : lowestCard(legalCards);
 }
 
-// ── HARD: "Them hadda be cheating" ──────────────────────────────────────────
 function aiHard(pos, legalCards) {
     const trump   = gameState.trumpSuit;
     const myTeam  = TEAM_MAP[pos];
@@ -2199,48 +2053,37 @@ function aiHard(pos, legalCards) {
     const nonTrump    = legalCards.filter(c => c.suit !== trump);
     const trumpLeft   = trumpsRemaining();
 
-    // ── Leading ─────────────────────────────────────────────────────────
     if (!gameState.ledSuit) {
-        // 1. If we hold the Jack and have strong trump backup, draw trump to protect it
         if (jack && trumpCards.length >= 2 && !opponentHasTrump(pos)) {
-            // Opponents voided of trump — safe to lead Jack
             return jack;
         }
 
-        // 2. Draw opponents' trump with Ace/King of trump if we have more trump than them
         const highTrump = trumpCards.filter(c => c.value >= 13 && c.rank !== 'J');
         if (highTrump.length > 0 && trumpLeft <= trumpCards.length + 2) {
             return highestCard(highTrump);
         }
 
-        // 3. Lead a suit where partner might win (their held High)
         const aceKing = nonTrump.filter(c => c.value >= 13);
         if (aceKing.length > 0) return highestCard(aceKing);
 
-        // 4. Lead low to probe / setup
         const worthless = nonTrump.filter(c => pipValue(c) === 0);
         return worthless.length > 0 ? lowestCard(worthless) : lowestCard(nonTrump.length ? nonTrump : legalCards);
     }
 
-    // ── Following ────────────────────────────────────────────────────────
     const best = tw.value;
     const trickHasHighValue = Object.values(gameState.trickCards).some(isHighValueCard);
 
-    // Partner is winning and trick has no high-value cards — discard junk
     if (teamLeading && !trickHasHighValue) {
         const worthless = legalCards.filter(c => pipValue(c) === 0 && !(c.rank === 'J' && c.suit === trump));
         return worthless.length > 0 ? lowestCard(worthless) : lowestCard(legalCards);
     }
 
-    // Partner is winning and trick HAS value — dump a scoring card to help game point
     if (teamLeading && trickHasHighValue) {
         const highVal = legalCards.filter(isHighValueCard);
         if (highVal.length > 0) return highestCard(highVal);
         return lowestCard(legalCards);
     }
 
-    // Opponents winning — must respond
-    // Hunt: if opponent holds Jack and they are winning, try to capture it
     const oppJackHolder = PLAY_ORDER.find(p =>
         TEAM_MAP[p] !== myTeam &&
         gameState.hands[p] && gameState.hands[p].some(c => c.rank === 'J' && c.suit === trump)
@@ -2249,11 +2092,9 @@ function aiHard(pos, legalCards) {
     const winner = smallestWinner(legalCards, best);
 
     if (winner) {
-        // Don't waste our Jack unless the trick is very high value
         if (winner.rank === 'J' && winner.suit === trump) {
             const trickPips = Object.values(gameState.trickCards).reduce((sum, c) => sum + pipValue(c), 0);
             if (trickPips < 8) {
-                // Not worth burning the Jack — find another winner
                 const altWin = legalCards.filter(c =>
                     canBeatCurrent(c, best) && !(c.rank === 'J' && c.suit === trump));
                 if (altWin.length > 0) return lowestCard(altWin);
@@ -2262,14 +2103,12 @@ function aiHard(pos, legalCards) {
         return winner;
     }
 
-    // Can't win — shed the least valuable card (protect Jack, protect game-point cards if partner can win)
     const canShed = legalCards.filter(c => !(c.rank === 'J' && c.suit === trump));
-    if (canShed.length === 0) return jack; // forced
+    if (canShed.length === 0) return jack;
     const worthless = canShed.filter(c => pipValue(c) === 0);
     return worthless.length > 0 ? lowestCard(worthless) : lowestCard(canShed);
 }
 
-// ── Main dispatcher ──────────────────────────────────────────────────────────
 function aiPlayCard(pos) {
     const hand = gameState.hands[pos];
     const legalCards = getLegalCards(pos);
@@ -2296,8 +2135,7 @@ function aiPlayCard(pos) {
 }
 
 function getPartner(pos) {
-    // Teams: South+North vs West+East
-    const partners = { south: 'north', north: 'south', west: 'east', east: 'west' };
+    const partners = { south: 'north', north: 'south', east: 'west', west: 'east' };
     return partners[pos];
 }
 
@@ -2312,16 +2150,12 @@ function placeCard(pos, card) {
     const trickArea = document.getElementById('trickArea');
     const cardHTML = getCardHTML(card, false, true);
     const div = document.createElement('div');
-    // Use visual position so host sees correctly too (host is always south=south)
     const visualPos = seatToVisual(pos);
     div.className = 'trick-card ' + visualPos;
     div.innerHTML = cardHTML;
     trickArea.appendChild(div);
 
     renderHand(pos);
-
-    // Push after every card so guests see it immediately
-    if (MP.active && MP.isHost) MP.pushState();
 }
 
 function advanceTurn() {
@@ -2332,13 +2166,7 @@ function advanceTurn() {
         const currentIdx = PLAY_ORDER.indexOf(gameState.currentPlayer);
         const nextIdx = (currentIdx + 1) % 4;
         gameState.currentPlayer = PLAY_ORDER[nextIdx];
-        if (MP.active && MP.isHost) {
-            MP.pushState().then(() => {
-                setTimeout(() => nextTurn(), 150); // small delay so guest receives state
-            });
-        } else {
-            nextTurn();
-        }
+        nextTurn();
     }
 }
 
@@ -2350,27 +2178,21 @@ function resolveTrick() {
     let winner = null;
     let winningValue = -Infinity;
 
-    console.log('--- Resolving trick --- Trump:', trumpSuit, ' Led:', ledSuit);
-
     for (const pos in gameState.trickCards) {
         const card = gameState.trickCards[pos];
         const isTrump = card.suit === trumpSuit;
         const isLed = card.suit === ledSuit;
 
         let value;
-        if (isTrump) value = card.value + 100;       // trump always beats non-trump
-        else if (isLed) value = card.value;           // led suit — rank decides
-        else value = -1;                               // off-suit, can never win
-
-        console.log(pos, ':', card.rank + card.suit[0].toUpperCase(), '→ effective value:', value);
+        if (isTrump) value = card.value + 100;
+        else if (isLed) value = card.value;
+        else value = -1;
 
         if (value > winningValue) {
             winningValue = value;
             winner = pos;
         }
     }
-
-    console.log('Winner:', winner, '| Team:', TEAM_MAP[winner]);
 
     const winningTeam = TEAM_MAP[winner];
     const trickCards = Object.values(gameState.trickCards);
@@ -2413,34 +2235,25 @@ function endRound() {
 }
 
 function calculateRoundScores() {
-    // Official scoring order: High → Low → Jack → Game
-    // Points are counted in this order to resolve ties at end of game
     const trumpSuit = gameState.trumpSuit;
     const scores = { team1: 0, team2: 0, breakdown: [] };
 
-    // ── HIGH (1 pt) ──────────────────────────────────────────────────
-    // Awarded to the team that held the highest trump dealt (regardless of trick won)
     if (gameState.highTrump) {
         const team = TEAM_MAP[gameState.highTrump.pos];
         scores['team' + team] += 1;
-        scores.breakdown.push({ label: 'High (' + gameState.highTrump.card.rank + '♠'.replace('♠', SUIT_SYMBOLS[trumpSuit]) + ')', team });
+        scores.breakdown.push({ label: 'High (' + gameState.highTrump.card.rank + SUIT_SYMBOLS[trumpSuit] + ')', team });
     }
 
-    // ── LOW (1 pt) ───────────────────────────────────────────────────
-    // Awarded to the team that HELD the lowest trump dealt (not who won it in a trick)
     if (gameState.lowTrump) {
         const team = TEAM_MAP[gameState.lowTrump.pos];
         scores['team' + team] += 1;
         scores.breakdown.push({ label: 'Low (' + gameState.lowTrump.card.rank + SUIT_SYMBOLS[trumpSuit] + ')', team });
     }
 
-    // ── JACK (1 pt or HANG JACK 3 pts) ──────────────────────────────
-    // Jack of trumps MUST have been dealt for this to score
     if (gameState.jackHolder !== null) {
         const jackHolderTeam = TEAM_MAP[gameState.jackHolder];
         let jackScored = false;
 
-        // Find which team won the trick containing the jack of trumps
         for (const team of [1, 2]) {
             for (const trick of gameState.tricksWon['team' + team]) {
                 const hasJack = trick.some(function(c) { return c.rank === 'J' && c.suit === trumpSuit; });
@@ -2448,12 +2261,10 @@ function calculateRoundScores() {
                 jackScored = true;
 
                 if (team === jackHolderTeam) {
-                    // Jack won by holder's team → 1 point (standard)
                     const pts = 1;
                     scores['team' + team] += pts;
                     scores.breakdown.push({ label: 'Jack (won by holder)', team });
                 } else {
-                    // Opponents captured the jack → HANG JACK (3 points by default)
                     const hangPts = parseInt(gameRules.hangJack) || 3;
                     scores['team' + team] += hangPts;
                     scores.breakdown.push({ label: 'Hang Jack (' + hangPts + 'pts, captured!)', team });
@@ -2464,9 +2275,6 @@ function calculateRoundScores() {
         }
     }
 
-    // ── GAME POINT (1 pt) ────────────────────────────────────────────
-    // Each team totals pip values of cards won in tricks: A=4, K=3, Q=2, J=1, 10=10
-    // Higher total wins 1 point. Tie = no one scores.
     let pipTotal = { 1: 0, 2: 0 };
     for (const team of [1, 2]) {
         for (const trick of gameState.tricksWon['team' + team]) {
@@ -2490,7 +2298,6 @@ function calculateRoundScores() {
         scores.breakdown.push({ label: 'Game (tie — no point)', team: 0 });
     }
 
-    console.log('Round scores:', scores.breakdown);
     return scores;
 }
 
@@ -2567,7 +2374,6 @@ function generateCoachTips(scores) {
 
     if (humanLogs.length === 0) return tips;
 
-    // Beg/Stand tip
     if (gameState.begged && scores.team1 < scores.team2) {
         tips.push({
             category: '🙏 Beg/Stand',
@@ -2575,7 +2381,6 @@ function generateCoachTips(scores) {
         });
     }
 
-    // Game point tip
     if (scores.team1 < scores.team2) {
         tips.push({
             category: '🎯 Game Point',
@@ -2583,7 +2388,6 @@ function generateCoachTips(scores) {
         });
     }
 
-    // Trump awareness
     const trumpCardsWon = gameState.tricksWon.team1.filter(function(trick) {
         return trick.some(function(c) { return c.suit === trumpSuit && c.rank === 'J'; });
     });
@@ -2646,16 +2450,12 @@ function saveStats() {
 }
 
 // ==================== SOUND & HAPTICS ENGINE ====================
-// Pure Web Audio API — zero files, zero dependencies
-// Every sound synthesized in real-time
-
 const SFX = {
     ctx: null,
     enabled: true,
     hapticsEnabled: true,
     volume: 0.7,
 
-    // Lazy-init AudioContext on first user gesture
     init() {
         if (this.ctx) return;
         try {
@@ -2665,14 +2465,12 @@ const SFX = {
         }
     },
 
-    // Resume context if suspended (mobile autoplay policy)
     resume() {
         if (this.ctx && this.ctx.state === 'suspended') {
             this.ctx.resume();
         }
     },
 
-    // ── Core oscillator builder ──────────────────────────────────────
     _osc(type, freq, startTime, duration, gainStart, gainEnd, ctx) {
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -2701,7 +2499,6 @@ const SFX = {
         gain.gain.exponentialRampToValueAtTime(
             Math.max(0.0001, gainEnd * this.volume), startTime + duration
         );
-        // Low-pass filter for felt-like thud
         const filter = ctx.createBiquadFilter();
         filter.type = 'lowpass';
         filter.frequency.value = 800;
@@ -2712,7 +2509,6 @@ const SFX = {
         return src;
     },
 
-    // ── Vibration helper ────────────────────────────────────────────
     vibrate(pattern) {
         if (!this.hapticsEnabled) return;
         if ('vibrate' in navigator) {
@@ -2720,33 +2516,28 @@ const SFX = {
         }
     },
 
-    // ── CARD DEAL: soft papery whip ─────────────────────────────────
     cardDeal() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // High-freq noise burst + quick pitch sweep
         this._noise(t, 0.08, 0.15, 0.001, ctx);
         this._osc('sawtooth', 3200, t, 0.06, 0.04, 0.001, ctx);
         this._osc('sine', 1800, t + 0.02, 0.05, 0.06, 0.001, ctx);
         this.vibrate(15);
     },
 
-    // ── CARD PLAY: satisfying felt slap ─────────────────────────────
     cardPlay() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // Low thud + mid snap
         this._noise(t, 0.12, 0.3, 0.001, ctx);
         this._osc('sine', 180, t, 0.08, 0.5, 0.001, ctx);
         this._osc('triangle', 420, t, 0.05, 0.2, 0.001, ctx);
         this.vibrate(20);
     },
 
-    // ── TRUMP CARD PLAYED: heavier, more resonant ───────────────────
     trumpPlay() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
@@ -2759,13 +2550,12 @@ const SFX = {
         this.vibrate([20, 10, 20]);
     },
 
-    // ── TRICK WIN: quick rising arpeggio ────────────────────────────
     trickWin() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        const notes = [523, 659, 784]; // C5 E5 G5
+        const notes = [523, 659, 784];
         notes.forEach((freq, i) => {
             this._osc('sine', freq, t + i * 0.07, 0.18, 0.3, 0.001, ctx);
             this._osc('triangle', freq * 2, t + i * 0.07, 0.12, 0.08, 0.001, ctx);
@@ -2773,42 +2563,36 @@ const SFX = {
         this.vibrate([15, 30, 15]);
     },
 
-    // ── OPPONENT TRICK WIN: low minor descend ───────────────────────
     trickLose() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        const notes = [392, 330, 294]; // G4 E4 D4 — minor feel
+        const notes = [392, 330, 294];
         notes.forEach((freq, i) => {
             this._osc('sine', freq, t + i * 0.08, 0.15, 0.15, 0.001, ctx);
         });
         this.vibrate(10);
     },
 
-    // ── KICKING: bright coin ding ───────────────────────────────────
     kicking() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // Bell-like tone: high sine + harmonics, slow decay
-        this._osc('sine', 1047, t, 0.6, 0.35, 0.001, ctx);  // C6
-        this._osc('sine', 2093, t, 0.6, 0.12, 0.001, ctx);  // C7
+        this._osc('sine', 1047, t, 0.6, 0.35, 0.001, ctx);
+        this._osc('sine', 2093, t, 0.6, 0.12, 0.001, ctx);
         this._osc('sine', 1319, t + 0.01, 0.4, 0.08, 0.001, ctx);
         this.vibrate([10, 20, 10]);
     },
 
-    // ── TRUMP CHANGE: dramatic low stab + shimmer ───────────────────
     trumpChange() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // Low power hit
         this._osc('sawtooth', 80, t, 0.25, 0.6, 0.001, ctx);
         this._osc('square', 160, t, 0.2, 0.4, 0.001, ctx);
-        // Rising shimmer
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = 'sine';
@@ -2823,13 +2607,11 @@ const SFX = {
         this.vibrate([30, 20, 30, 20, 30]);
     },
 
-    // ── HANG JACK: massive impact ───────────────────────────────────
     hangJack() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // Sub bass punch
         const subOsc = ctx.createOscillator();
         const subGain = ctx.createGain();
         subOsc.type = 'sine';
@@ -2841,44 +2623,37 @@ const SFX = {
         subGain.connect(ctx.destination);
         subOsc.start(t);
         subOsc.stop(t + 0.45);
-        // Noise crash
         this._noise(t, 0.2, 0.4, 0.001, ctx);
-        // Triumphant rising chord
         [392, 494, 587, 784].forEach((freq, i) => {
             this._osc('sine', freq, t + 0.1 + i * 0.06, 0.5, 0.25, 0.001, ctx);
         });
         this.vibrate([50, 30, 50, 30, 100]);
     },
 
-    // ── GAME WIN: full Trini-style fanfare ──────────────────────────
     gameWin() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // Rising arpeggio fanfare
         const melody = [
-            [523, 0.0], [659, 0.1], [784, 0.2], [1047, 0.3],  // C E G C
-            [880, 0.5], [784, 0.6], [1047, 0.75]               // A G C high
+            [523, 0.0], [659, 0.1], [784, 0.2], [1047, 0.3],
+            [880, 0.5], [784, 0.6], [1047, 0.75]
         ];
         melody.forEach(([freq, offset]) => {
             this._osc('sine', freq, t + offset, 0.22, 0.4, 0.001, ctx);
             this._osc('triangle', freq * 0.5, t + offset, 0.15, 0.15, 0.001, ctx);
         });
-        // Background chord swell
         [261, 329, 392].forEach(freq => {
             this._osc('sine', freq, t + 0.3, 0.7, 0.2, 0.001, ctx);
         });
         this.vibrate([100, 50, 100, 50, 200]);
     },
 
-    // ── GAME LOSS: descending sad trombone ──────────────────────────
     gameLoss() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
         const ctx = this.ctx;
         const t = ctx.currentTime;
-        // Wah-wah descend
         const notes = [
             [392, 0.0], [349, 0.15], [311, 0.30], [277, 0.50]
         ];
@@ -2886,7 +2661,6 @@ const SFX = {
             this._osc('sawtooth', freq, t + offset, 0.25, 0.3, 0.001, ctx);
             this._osc('sine', freq * 0.5, t + offset, 0.2, 0.15, 0.001, ctx);
         });
-        // Vibrato on last note
         const vib = ctx.createOscillator();
         const vibGain = ctx.createGain();
         const mainOsc = ctx.createOscillator();
@@ -2906,7 +2680,6 @@ const SFX = {
         this.vibrate([200]);
     },
 
-    // ── ILLEGAL PLAY: sharp buzz reject ─────────────────────────────
     illegalPlay() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
@@ -2917,7 +2690,6 @@ const SFX = {
         this.vibrate([80, 30, 80]);
     },
 
-    // ── BEG: soft spoken chime ──────────────────────────────────────
     beg() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
@@ -2928,7 +2700,6 @@ const SFX = {
         this.vibrate(25);
     },
 
-    // ── STAND: confident thump ───────────────────────────────────────
     stand() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
@@ -2939,7 +2710,6 @@ const SFX = {
         this.vibrate(30);
     },
 
-    // ── JACK WIN: 3-note triumphant hit ─────────────────────────────
     jackWin() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
@@ -2952,7 +2722,6 @@ const SFX = {
         this.vibrate([20, 20, 40]);
     },
 
-    // ── TOGGLE: click sound for settings ────────────────────────────
     toggle() {
         this.init(); this.resume();
         if (!this.enabled || !this.ctx) return;
@@ -2963,9 +2732,7 @@ const SFX = {
     }
 };
 
-// ── Patch all game events with sound ────────────────────────────────────────
-
-// Store original functions, wrap them with sound
+// Sound effect integration
 const _origPlaceCard = placeCard;
 placeCard = function(pos, card) {
     const isTrump = gameState.trumpSuit && card.suit === gameState.trumpSuit;
@@ -2979,7 +2746,6 @@ placeCard = function(pos, card) {
 
 const _origResolveTrick = resolveTrick;
 resolveTrick = function() {
-    // Pre-calculate winner to play correct sound
     const trumpSuit = gameState.trumpSuit;
     const ledSuit = gameState.ledSuit;
     let winner = null, winningValue = -Infinity;
@@ -3010,15 +2776,15 @@ endGame = function() {
 
 const _origHumanPlayCard = humanPlayCard;
 humanPlayCard = function(cardIndex) {
-    // Play sound for illegal attempt
-    if (gameState.humanLocked || gameState.currentPlayer !== 'south') {
+    if (gameState.humanLocked || gameState.currentPlayer !== (MP.active ? MP.myPosition : 'south')) {
         SFX.illegalPlay();
         return;
     }
-    const hand = gameState.hands.south;
+    const myPos = MP.active ? MP.myPosition : 'south';
+    const hand = gameState.hands[myPos];
     if (cardIndex >= 0 && cardIndex < hand.length) {
         const card = hand[cardIndex];
-        if (!canPlayCard('south', card)) {
+        if (!canPlayCard(myPos, card)) {
             SFX.illegalPlay();
         }
     }
@@ -3043,7 +2809,6 @@ executeTrumpChange = function() {
     return _origExecuteTrumpChange();
 };
 
-// Patch kicking sound into scoreKickCard
 const _origScoreKickCard = scoreKickCard;
 scoreKickCard = function(card) {
     const result = _origScoreKickCard(card);
@@ -3053,28 +2818,23 @@ scoreKickCard = function(card) {
     return result;
 };
 
-// Deal sound: patch renderAllHands to play deal sounds staggered
 const _origBeginDeal = beginDeal;
 beginDeal = function() {
-    // Staggered card deal sounds
     [0, 80, 160, 240, 320, 400].forEach(delay => {
         setTimeout(() => SFX.cardDeal(), delay);
     });
     return _origBeginDeal();
 };
 
-// Hang Jack special sound — patch calculateRoundScores
 const _origCalculateRoundScores = calculateRoundScores;
 calculateRoundScores = function() {
     const scores = _origCalculateRoundScores();
-    // Check if hang jack occurred
     const hasHangJack = scores.breakdown && scores.breakdown.some(
         item => item.label && item.label.includes('Hang Jack')
     );
     if (hasHangJack) {
         setTimeout(() => SFX.hangJack(), 500);
     } else {
-        // Check if jack was won normally by holder's team
         const jackWon = scores.breakdown && scores.breakdown.some(
             item => item.label && item.label.includes('Jack (won')
         );
@@ -3083,8 +2843,7 @@ calculateRoundScores = function() {
     return scores;
 };
 
-// ── Sound toggle button ────────────────────────────────────────────────────
-// Loaded from localStorage
+// Init sound prefs
 (function initSoundPrefs() {
     const saved = localStorage.getItem('allfours_sfx');
     if (saved) {
@@ -3111,7 +2870,7 @@ function toggleHaptics() {
     localStorage.setItem('allfours_sfx', JSON.stringify({ sound: SFX.enabled, haptics: SFX.hapticsEnabled }));
 }
 
-// Init AudioContext on first tap anywhere (mobile autoplay policy requires user gesture)
+// Init AudioContext on first tap
 document.addEventListener('touchstart', function initAudio() {
     SFX.init();
     SFX.resume();
@@ -3124,7 +2883,7 @@ document.addEventListener('click', function initAudioClick() {
     document.removeEventListener('click', initAudioClick);
 }, { once: true });
 
-// Sync button visual state after load
+// Sync button visual state
 (function syncSoundButtons() {
     const btn = document.getElementById('soundToggleBtn');
     if (btn) btn.textContent = SFX.enabled ? '🔊' : '🔇';
@@ -3137,17 +2896,17 @@ document.addEventListener('click', function initAudioClick() {
     }
 })();
 
+// Load saved rules
 const savedRules = localStorage.getItem('allfours_rules');
 if (savedRules) {
     gameRules = JSON.parse(savedRules);
 }
 
 </script>
-    <!-- Firebase compat SDK (loaded last so DOM is ready) -->
+    <!-- Firebase compat SDK -->
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
     <script>
-        // Initialize Firebase after SDK scripts have loaded
         firebase.initializeApp({
             apiKey: "AIzaSyD70zj6RDJvnGVcGKAxkCFp6VYD0tqzFdk",
             authDomain: "all-fours-trinidad.firebaseapp.com",
