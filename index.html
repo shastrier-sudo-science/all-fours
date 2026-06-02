@@ -924,22 +924,42 @@ function guestEnterGame(state) {
 // ── Host: listen for guest card plays ──────────────────────────────────────
 function hostListenForMoves() {
     if (!MP.roomCode || !MP._ready()) return;
+    console.log('[HOST] hostListenForMoves attached, room:', MP.roomCode);
     MP.listen('rooms/' + MP.roomCode + '/pendingMove', snap => {
         const move = snap.val();
-        if (!move || !move.type) return;
+        console.log('[HOST] pendingMove snapshot:', move);
+        if (!move || !move.type) {
+            console.log('[HOST] Ignoring empty/invalid move');
+            return;
+        }
+
+        console.log('[HOST] Move received:', move.type, 'from:', move.from, 'currentPlayer:', gameState.currentPlayer, 'phase:', gameState.phase);
 
         if (move.type === 'playCard') {
             const { pos, card } = move.payload;
+            console.log('[HOST] playCard payload:', pos, card.rank, card.suit);
+
             const hand = gameState.hands[pos];
+            if (!hand) {
+                console.error('[HOST] No hand found for', pos);
+                return;
+            }
             const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
+            console.log('[HOST] card index in hand:', idx);
+
             if (idx >= 0 && gameState.phase === 'play' && gameState.currentPlayer === pos) {
                 const cardObj = hand[idx];
                 if (canPlayCard(pos, cardObj)) {
+                    console.log('[HOST] Playing card for', pos, cardObj.rank, cardObj.suit);
                     hand.splice(idx, 1);
                     placeCard(pos, cardObj);
                     if (gameRules.coach) logCoachPlay(pos, cardObj, hand);
                     advanceTurn();
+                } else {
+                    console.warn('[HOST] Card not playable:', card.rank, card.suit);
                 }
+            } else {
+                console.warn('[HOST] Conditions not met – phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'expected:', pos, 'index:', idx);
             }
         } else if (move.type === 'beg') {
             if (gameState.phase === 'beg' && gameState.currentPlayer === move.from) {
