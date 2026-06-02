@@ -1664,6 +1664,7 @@ function renderHand(pos, highlightPlayable) {
         let playable = false;
         if (showFaceUp && highlightPlayable && gameState.phase === 'play' && gameState.currentPlayer === myPos) {
             playable = canPlayCard(myPos, card);
+            console.log('[renderHand] card', card.rank, card.suit, 'playable:', playable, 'humanLocked:', gameState.humanLocked);
         }
         html += getCardHTML(card, playable, showFaceUp);
     }
@@ -1686,7 +1687,10 @@ function renderHand(pos, highlightPlayable) {
             el.style.left = leftPos + 'px';
             el.style.zIndex = idx + 1;
             el.style.transform = 'rotate(' + angle + 'deg)';
-            el.addEventListener('click', function() { humanPlayCard(idx); });
+            el.addEventListener('click', function() {
+                console.log('[CARD CLICK] idx:', idx, 'humanLocked:', gameState.humanLocked, 'phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'myPos:', MP.myPosition);
+                humanPlayCard(idx);
+            });
         });
     }
 }
