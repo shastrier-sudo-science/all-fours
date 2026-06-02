@@ -945,7 +945,7 @@ function hostListenForMoves() {
 
         if (move.type === 'playCard') {
             const { pos, card } = move.payload;
-            // Find card object in hand and play it properly
+            console.log('[HOST] received playCard from', pos, 'card:', card?.rank, card?.suit, 'currentPlayer:', gameState.currentPlayer, 'phase:', gameState.phase);
             const hand = gameState.hands[pos];
             const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
             if (idx >= 0 && gameState.phase === 'play' && gameState.currentPlayer === pos) {
@@ -1949,10 +1949,11 @@ function getLegalCards(pos) {
 
 // ==================== HUMAN PLAY ====================
 function humanPlayCard(cardIndex) {
-    if (gameState.humanLocked) return;
+    console.log('[humanPlayCard] idx:', cardIndex, 'locked:', gameState.humanLocked, 'phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'myPos:', MP.active ? MP.myPosition : 'south');
+    if (gameState.humanLocked) { console.log('[humanPlayCard] BLOCKED by humanLocked'); return; }
     const myPos = MP.active ? MP.myPosition : 'south';
-    if (gameState.currentPlayer !== myPos) return;
-    if (gameState.phase !== 'play') return;
+    if (gameState.currentPlayer !== myPos) { console.log('[humanPlayCard] BLOCKED currentPlayer mismatch'); return; }
+    if (gameState.phase !== 'play') { console.log('[humanPlayCard] BLOCKED wrong phase:', gameState.phase); return; }
 
     const hand = gameState.hands[myPos];
     if (cardIndex < 0 || cardIndex >= hand.length) return;
