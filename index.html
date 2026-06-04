@@ -1907,21 +1907,17 @@ function humanPlayCard(cardIndex) {
         return;
     }
 
-    // Inside humanPlayCard, after MP.sendMove... (guest branch)
+    // Guest branch: send move to host via Firebase
     if (MP.active && !MP.isHost) {
-        if (MP.active && !MP.isHost) {
-        // Create a unique move ID (timestamp + random)
         const moveId = Date.now() + '_' + Math.random().toString(36).substr(2, 6);
         MP.sendMove('playCard', { pos: myPos, card, moveId: moveId });
         gameState.humanLocked = true;
         renderHand(myPos);
 
-        // Store the moveId so the retry uses the same one
         gameState._lastMoveId = moveId;
 
         const retryTimeout = setTimeout(() => {
             if (gameState.humanLocked && gameState.currentPlayer === myPos) {
-                console.warn('[GUEST] Move not processed after 5s – resending');
                 MP.sendMove('playCard', { pos: myPos, card, moveId: moveId });
                 showMessage('Resending move...', 'Waiting for host response');
             }
