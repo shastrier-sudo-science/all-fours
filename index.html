@@ -924,30 +924,46 @@ function guestEnterGame(state) {
 // ── Host: listen for guest card plays ──────────────────────────────────────
 function hostListenForMoves() {
     if (!MP.roomCode || !MP._ready()) return;
-    console.log('[HOST] hostListenForMoves attached, room:', MP.roomCode);
+    console.log('[HOST] Listening for moves on room:', MP.roomCode);
     MP.listen('rooms/' + MP.roomCode + '/pendingMove', snap => {
         const move = snap.val();
-        console.log('[HOST] pendingMove snapshot:', move);
-        if (!move || !move.type) {
-            console.log('[HOST] Ignoring empty/invalid move');
-            return;
-        }
+        if (!move || !move.type) return;
 
-        console.log('[HOST] Move received:', move.type, 'from:', move.from, 'currentPlayer:', gameState.currentPlayer, 'phase:', gameState.phase);
+        console.log('[HOST] Received move:', move.type, 'from', move.from, 'moveId:', move.payload?.moveId);
 
-        if (move.type === 'playCard') {
-            const { pos, card } = move.payload;
-            console.log('[HOST] playCard payload:', pos, card.rank, card.suit);
-
-            const hand = gameState.hands[pos];
-            if (!hand) {
-                console.error('[HOST] No hand found for', pos);
+        // --- DUPLICATE MOVE CHECK ---
+        const pos = move.from;
+        if (pos) {
+            // Track last processed moveId per player
+            if (!gameState._processedMoves) gameState._processedMoves = {};
+            const lastId = gameState._processedMoves[pos];
+            const thisId = move.payload?.moveId;
+            if (thisId && lastId === thisId) {
+                console.log('[HOST] Duplicate move ignored:', thisId);
+                MP.clearMove();
                 return;
             }
-            const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
-            console.log('[HOST] card index in hand:', idx);
+            if (thisId) {
+                gameState._processedMoves[pos] = thisId;
+            }
+        }
 
-            if (idx >= 0 && gameState.phase === 'play' && gameState.currentPlayer === pos) {
+        if (move.type === 'playCard') {
+            const { pos, card, moveId } = move.payload;
+            if (!pos || !card) return;
+
+            const hand = gameState.hands[pos];
+            if (!hand) return;
+
+            // Ensure the card is still in the hand (prevent double play)
+            const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
+            if (idx === -1) {
+                console.warn('[HOST] Card not found in hand – already played?', card.rank, card.suit);
+                MP.clearMove();
+                return;
+            }
+
+            if (gameState.phase === 'play' && gameState.currentPlayer === pos) {
                 const cardObj = hand[idx];
                 if (canPlayCard(pos, cardObj)) {
                     console.log('[HOST] Playing card for', pos, cardObj.rank, cardObj.suit);
@@ -956,10 +972,10 @@ function hostListenForMoves() {
                     if (gameRules.coach) logCoachPlay(pos, cardObj, hand);
                     advanceTurn();
                 } else {
-                    console.warn('[HOST] Card not playable:', card.rank, card.suit);
+                    console.warn('[HOST] Card not playable');
                 }
             } else {
-                console.warn('[HOST] Conditions not met – phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'expected:', pos, 'index:', idx);
+                console.warn('[HOST] Wrong phase or turn – phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'expected:', pos);
             }
         } else if (move.type === 'beg') {
             if (gameState.phase === 'beg' && gameState.currentPlayer === move.from) {
@@ -978,7 +994,7 @@ function hostListenForMoves() {
         }
         MP.clearMove();
     });
-}
+	}
 
 // ── Guest: apply state pushed by host ──────────────────────────────────────
 function guestListenForState() {
@@ -1422,6 +1438,7 @@ function resetGameState() {
         highTrump: null, lowTrump: null, jackHolder: null
     };
     clearTable();
+	gameState._processedMoves = {};
 }
 
 function clearTable() {
@@ -1892,25 +1909,29 @@ function humanPlayCard(cardIndex) {
 
     // Inside humanPlayCard, after MP.sendMove... (guest branch)
     if (MP.active && !MP.isHost) {
-    MP.sendMove('playCard', { pos: myPos, card });
-    gameState.humanLocked = true;
-    renderHand(myPos);
+        if (MP.active && !MP.isHost) {
+        // Create a unique move ID (timestamp + random)
+        const moveId = Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+        MP.sendMove('playCard', { pos: myPos, card, moveId: moveId });
+        gameState.humanLocked = true;
+        renderHand(myPos);
 
-    // Safety timeout: if no state update within 5 seconds, resend or warn
-    const retryTimeout = setTimeout(() => {
-    if (gameState.humanLocked && gameState.currentPlayer === myPos) {
-            console.warn('[GUEST] Move not processed after 5s – resending');
-            MP.sendMove('playCard', { pos: myPos, card });
-            // Optionally show a message
-            showMessage('Resending move...', 'Waiting for host response');
-        }
-    }, 5000);
+        // Store the moveId so the retry uses the same one
+        gameState._lastMoveId = moveId;
 
-    // Store the timeout so we can clear it when state arrives (in applyRemoteState)
-    if (!gameState._retryTimeout) gameState._retryTimeout = [];
-    gameState._retryTimeout.push(retryTimeout);
-    return;
-}
+        const retryTimeout = setTimeout(() => {
+            if (gameState.humanLocked && gameState.currentPlayer === myPos) {
+                console.warn('[GUEST] Move not processed after 5s – resending');
+                MP.sendMove('playCard', { pos: myPos, card, moveId: moveId });
+                showMessage('Resending move...', 'Waiting for host response');
+            }
+        }, 5000);
+
+        if (!gameState._retryTimeout) gameState._retryTimeout = [];
+        gameState._retryTimeout.push(retryTimeout);
+
+        return;
+    }
 
     if (gameRules.underTrump !== 'none') {
         const undertrumpCheck = checkUndertrump(myPos, card);
