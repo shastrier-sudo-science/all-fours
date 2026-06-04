@@ -924,22 +924,17 @@ function guestEnterGame(state) {
 // ── Host: listen for guest card plays ──────────────────────────────────────
 function hostListenForMoves() {
     if (!MP.roomCode || !MP._ready()) return;
-    console.log('[HOST] Listening for moves on room:', MP.roomCode);
     MP.listen('rooms/' + MP.roomCode + '/pendingMove', snap => {
         const move = snap.val();
         if (!move || !move.type) return;
 
-        console.log('[HOST] Received move:', move.type, 'from', move.from, 'moveId:', move.payload?.moveId);
-
         // --- DUPLICATE MOVE CHECK ---
         const pos = move.from;
         if (pos) {
-            // Track last processed moveId per player
             if (!gameState._processedMoves) gameState._processedMoves = {};
             const lastId = gameState._processedMoves[pos];
             const thisId = move.payload?.moveId;
             if (thisId && lastId === thisId) {
-                console.log('[HOST] Duplicate move ignored:', thisId);
                 MP.clearMove();
                 return;
             }
@@ -948,6 +943,9 @@ function hostListenForMoves() {
             }
         }
 
+        // Clear BEFORE processing to prevent double-fire from Firebase listener
+        MP.clearMove();
+
         if (move.type === 'playCard') {
             const { pos, card, moveId } = move.payload;
             if (!pos || !card) return;
@@ -955,27 +953,25 @@ function hostListenForMoves() {
             const hand = gameState.hands[pos];
             if (!hand) return;
 
+            // Guard: if this player already has a card in the current trick, ignore
+            if (gameState.trickCards && gameState.trickCards[pos]) {
+                return;
+            }
+
             // Ensure the card is still in the hand (prevent double play)
             const idx = hand.findIndex(c => c.rank === card.rank && c.suit === card.suit);
             if (idx === -1) {
-                console.warn('[HOST] Card not found in hand – already played?', card.rank, card.suit);
-                MP.clearMove();
                 return;
             }
 
             if (gameState.phase === 'play' && gameState.currentPlayer === pos) {
                 const cardObj = hand[idx];
                 if (canPlayCard(pos, cardObj)) {
-                    console.log('[HOST] Playing card for', pos, cardObj.rank, cardObj.suit);
                     hand.splice(idx, 1);
                     placeCard(pos, cardObj);
                     if (gameRules.coach) logCoachPlay(pos, cardObj, hand);
                     advanceTurn();
-                } else {
-                    console.warn('[HOST] Card not playable');
                 }
-            } else {
-                console.warn('[HOST] Wrong phase or turn – phase:', gameState.phase, 'currentPlayer:', gameState.currentPlayer, 'expected:', pos);
             }
         } else if (move.type === 'beg') {
             if (gameState.phase === 'beg' && gameState.currentPlayer === move.from) {
@@ -992,9 +988,8 @@ function hostListenForMoves() {
                 setTimeout(() => { beginPlayPhase(); }, getDelay(1500, 'think'));
             }
         }
-        MP.clearMove();
     });
-	}
+}
 
 // ── Guest: apply state pushed by host ──────────────────────────────────────
 function guestListenForState() {
@@ -1680,14 +1675,15 @@ function beginBegPhase() {
     const myPos = MP.active ? MP.myPosition : 'south';
 
     if (MP.active && MP.isHost) {
-        const isHuman = !!(gameState.players && gameState.players[begPlayer]);
-        if (!isHuman && begPlayer !== 'south') {
+        const isRemoteHuman = !!(gameState.players && gameState.players[begPlayer]) && begPlayer !== 'south';
+        if (!isRemoteHuman && begPlayer !== 'south') {
             MP.pushState();
             setTimeout(() => aiBegDecision(begPlayer), getDelay(1200, 'think'));
-        } else if (begPlayer === 'south' || (isHuman && begPlayer === MP.myPosition)) {
+        } else if (begPlayer === 'south') {
             MP.pushState();
             _showBegUI(begPlayer);
         } else {
+            // Remote human guest
             gameState.humanLocked = true;
             MP.pushState();
         }
@@ -1815,20 +1811,24 @@ function nextTurn() {
 
     if (MP.active) {
         if (MP.isHost) {
-            const isHuman = !!(gameState.players && gameState.players[pos]);
-            
-            if (isHuman && pos !== 'south') {
+            // A seat is a remote human if it's in gameState.players AND it's not the host's own seat (south)
+            const isRemoteHuman = !!(gameState.players && gameState.players[pos]) && pos !== 'south';
+
+            if (isRemoteHuman) {
+                // Wait for guest to send their move via Firebase
                 gameState.humanLocked = true;
                 renderAllHands();
                 MP.pushState();
-            } else if (!isHuman && pos !== 'south') {
-                gameState.humanLocked = true;
-                MP.pushState();
-                setTimeout(() => { aiPlayCard(pos); }, getDelay(1200, 'think'));
-            } else {
+            } else if (pos === 'south') {
+                // Host's own turn
                 gameState.humanLocked = false;
                 renderHand('south', true);
                 MP.pushState();
+            } else {
+                // AI seat
+                gameState.humanLocked = true;
+                MP.pushState();
+                setTimeout(() => { aiPlayCard(pos); }, getDelay(1200, 'think'));
             }
         }
         return;
@@ -1913,7 +1913,6 @@ function humanPlayCard(cardIndex) {
         MP.sendMove('playCard', { pos: myPos, card, moveId: moveId });
         gameState.humanLocked = true;
         renderHand(myPos);
-
         gameState._lastMoveId = moveId;
 
         const retryTimeout = setTimeout(() => {
