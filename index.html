@@ -85,8 +85,8 @@
         .player-area { position: absolute; display: flex; flex-direction: column; align-items: center; }
         .player-north { top: 5px; left: 50%; transform: translateX(-50%); }
         .player-east { right: 5px; top: 50%; transform: translateY(-50%); }
-        .player-south { bottom: 12px; left: 50%; transform: translateX(-50%); max-width: 98vw; width: 98vw; display: flex; flex-direction: column; align-items: center; z-index: 5; }
-        .south-hand { display: flex; justify-content: center; position: relative; height: 130px; min-width: 60px; max-width: 96vw; overflow: visible; margin: 0 auto 8px auto; }
+        .player-south { bottom: 60px; left: 50%; transform: translateX(-50%); max-width: 98vw; width: 98vw; display: flex; flex-direction: column; align-items: center; z-index: 5; }
+        .south-hand { display: flex; justify-content: center; position: relative; height: 100px; min-width: 60px; max-width: 96vw; overflow: visible; margin: 0 auto 8px auto; }
         .south-hand .card {
             width: 52px; height: 80px;
             position: absolute;
@@ -99,7 +99,7 @@
         .south-hand .card .rank, .south-hand .card .suit { display: none; }
         .south-hand .card.playable { border: 2px solid var(--accent-glow); box-shadow: 0 0 10px rgba(240,192,64,0.5); }
         .south-hand .card.playable:hover, .south-hand .card.playable:active { transform: translateY(-16px) scale(1.05) !important; box-shadow: 0 0 20px rgba(240,192,64,0.9) !important; z-index: 100 !important; }
-        .south-hand.nine-cards { height: 90px; }
+        .south-hand.nine-cards { height: 75px; }
         .player-west { left: 5px; top: 50%; transform: translateY(-50%); }
         .player-label { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; padding: 2px 8px; border-radius: 4px; background: rgba(0,0,0,0.4); }
         .player-label.active { background: var(--accent); color: var(--bg); animation: pulse 1s infinite; }
